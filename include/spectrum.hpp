@@ -22,7 +22,6 @@
 #include <fftw3.h>
 #include <sigc++/signal.h>
 #include <sys/types.h>
-#include <deque>
 #include <span>
 #include <string>
 #include <vector>
@@ -60,11 +59,10 @@ class Spectrum : public PluginBase {
 
   fftwf_complex* complex_output = nullptr;
 
+  std::vector<float> in_mono;
   std::vector<float> real_input;
   std::vector<float> hann_window;
   std::vector<double> output;
 
   uint n_bands = 8192U;
-
-  std::deque<float> deque_in_mono;
 };

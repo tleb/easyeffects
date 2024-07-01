@@ -43,6 +43,7 @@ Spectrum::Spectrum(const std::string& tag,
                    PipelineType pipe_type)
     : PluginBase(tag, "spectrum", tags::plugin_package::ee, schema, schema_path, pipe_manager, pipe_type),
       fftw_ready(true) {
+  in_mono.resize(n_bands);
   real_input.resize(n_bands);
   output.resize(n_bands / 2U + 1U);
 
@@ -85,8 +86,7 @@ Spectrum::~Spectrum() {
 }
 
 void Spectrum::setup() {
-  deque_in_mono.resize(0U);
-
+  std::ranges::fill(in_mono, 0.0F);
   std::ranges::fill(real_input, 0.0F);
 
   /*
@@ -94,13 +94,8 @@ void Spectrum::setup() {
     https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/src/pipewire/filter.c#L48. If we reevei a smaller
     array we have to insert some zeros in the beginning.
   */
+  assert(in_mono.size() == n_bands);
   assert(real_input.size() == n_bands);
-
-  if (n_samples < real_input.size()) {
-    while (deque_in_mono.size() != real_input.size() - n_samples) {
-      deque_in_mono.push_back(0.0F);
-    }
-  }
 }
 
 void Spectrum::process(std::span<float>& left_in,
@@ -116,28 +111,27 @@ void Spectrum::process(std::span<float>& left_in,
     return;
   }
 
-  assert(left_in.size() == right_in.size());
-  assert(left_in.size() <= n_bands);
-  assert(real_input.size() == n_bands);
-  assert(deque_in_mono.size() == n_bands - left_in.size());
+  size_t n_new_samples = left_in.size();
 
-  for (uint n = 0U; n < left_in.size(); n++) {
-    deque_in_mono.push_back(0.5F * (left_in[n] + right_in[n]));
+  assert(left_in.size() == right_in.size());
+  assert(n_new_samples <= n_bands);
+  assert(in_mono.size() == n_bands);
+  assert(real_input.size() == n_bands);
+
+  // Shift the content of in_mono by n_new_samples amount. This will allow us to
+  // add new samples to the end.
+  for (size_t n = 0; n < n_bands - n_new_samples; n++) {
+    in_mono[n] = in_mono[n_new_samples + n];
   }
 
-  assert(deque_in_mono.size() == n_bands);
+  // Add new samples at the end.
+  for (size_t n = 0; n < n_new_samples; n++) {
+    in_mono[n_bands - n_new_samples + n] = 0.5F * (left_in[n] + right_in[n]);
+  }
 
   for (size_t n = 0; n < n_bands; n++) {
     // https :  // en.wikipedia.org/wiki/Hann_function
-    real_input[n] = deque_in_mono[n] * hann_window[n];
-  }
-
-  size_t count = 0U;
-
-  while (count < n_samples && !deque_in_mono.empty()) {
-    deque_in_mono.pop_front();
-
-    count++;
+    real_input[n] = in_mono[n] * hann_window[n];
   }
 
   if (send_notifications) {
