@@ -61,6 +61,7 @@ class Spectrum : public PluginBase {
   fftwf_complex* complex_output = nullptr;
 
   std::vector<float> real_input;
+  std::vector<float> hann_window;
   std::vector<double> output;
 
   uint n_bands = 8192U;

@@ -46,6 +46,12 @@ Spectrum::Spectrum(const std::string& tag,
   real_input.resize(n_bands);
   output.resize(n_bands / 2U + 1U);
 
+  hann_window.resize(n_bands);
+  for (size_t n = 0; n < n_bands; n++) {
+    hann_window[n] = 0.5F * (1.0F - std::cos(2.0F * std::numbers::pi_v<float> *
+        static_cast<float>(n) / static_cast<float>(n_bands-1)));
+  }
+
   complex_output = fftwf_alloc_complex(n_bands);
 
   plan = fftwf_plan_dft_r2c_1d(static_cast<int>(n_bands), real_input.data(), complex_output, FFTW_ESTIMATE);
@@ -121,15 +127,9 @@ void Spectrum::process(std::span<float>& left_in,
 
   assert(deque_in_mono.size() == n_bands);
 
-  for (size_t n = 0; n < deque_in_mono.size(); n++) {
-    if (n < real_input.size()) {
-      // https :  // en.wikipedia.org/wiki/Hann_function
-
-      const float w = 0.5F * (1.0F - std::cos(2.0F * std::numbers::pi_v<float> * static_cast<float>(n) /
-                                              static_cast<float>(real_input.size() - 1U)));
-
-      real_input[n] = deque_in_mono[n] * w;
-    }
+  for (size_t n = 0; n < n_bands; n++) {
+    // https :  // en.wikipedia.org/wiki/Hann_function
+    real_input[n] = deque_in_mono[n] * hann_window[n];
   }
 
   size_t count = 0U;
