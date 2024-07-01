@@ -24,6 +24,7 @@
 #include <glib.h>
 #include <sys/types.h>
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <mutex>
@@ -87,6 +88,7 @@ void Spectrum::setup() {
     https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/src/pipewire/filter.c#L48. If we reevei a smaller
     array we have to insert some zeros in the beginning.
   */
+  assert(real_input.size() == n_bands);
 
   if (n_samples < real_input.size()) {
     while (deque_in_mono.size() != real_input.size() - n_samples) {
@@ -108,9 +110,16 @@ void Spectrum::process(std::span<float>& left_in,
     return;
   }
 
+  assert(left_in.size() == right_in.size());
+  assert(left_in.size() <= n_bands);
+  assert(real_input.size() == n_bands);
+  assert(deque_in_mono.size() == n_bands - left_in.size());
+
   for (uint n = 0U; n < left_in.size(); n++) {
     deque_in_mono.push_back(0.5F * (left_in[n] + right_in[n]));
   }
+
+  assert(deque_in_mono.size() == n_bands);
 
   for (size_t n = 0; n < deque_in_mono.size(); n++) {
     if (n < real_input.size()) {
