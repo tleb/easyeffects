@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <fftw3.h>
 #include <sigc++/signal.h>
 #include <sys/types.h>
@@ -50,7 +51,7 @@ class Spectrum : public PluginBase {
 
   auto get_latency_seconds() -> float override;
 
-  sigc::signal<void(uint, uint, std::vector<double>)> power;  // rate, nbands, magnitudes
+  std::tuple<uint, uint, std::vector<double>> compute_magnitudes();
 
  private:
   bool fftw_ready = false;
@@ -63,6 +64,9 @@ class Spectrum : public PluginBase {
   std::vector<float> real_input;
   std::vector<float> hann_window;
   std::vector<double> output;
+
+  std::vector<float> data_a, data_b;
+  std::atomic<float*> data;
 
   uint n_bands = 8192U;
 };

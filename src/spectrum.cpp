@@ -44,6 +44,8 @@ Spectrum::Spectrum(const std::string& tag,
     : PluginBase(tag, "spectrum", tags::plugin_package::ee, schema, schema_path, pipe_manager, pipe_type),
       fftw_ready(true) {
   in_mono.resize(n_bands);
+  data_a.resize(n_bands);
+  data_b.resize(n_bands);
   real_input.resize(n_bands);
   output.resize(n_bands / 2U + 1U);
 
@@ -115,7 +117,8 @@ void Spectrum::process(std::span<float>& left_in,
 
   assert(left_in.size() == right_in.size());
   assert(n_new_samples <= n_bands);
-  assert(in_mono.size() == n_bands);
+  assert(data_a.size() == n_bands);
+  assert(data_b.size() == n_bands);
   assert(real_input.size() == n_bands);
 
   // Shift the content of in_mono by n_new_samples amount. This will allow us to
@@ -129,32 +132,49 @@ void Spectrum::process(std::span<float>& left_in,
     in_mono[n_bands - n_new_samples + n] = 0.5F * (left_in[n] + right_in[n]);
   }
 
+  // In data, we put the most recent buffer. We write into the buffer that is
+  // not the most recent.
+  std::vector<float> & buf = data.load() == data_a.data() ? data_b : data_a;
+
   for (size_t n = 0; n < n_bands; n++) {
-    // https :  // en.wikipedia.org/wiki/Hann_function
-    real_input[n] = in_mono[n] * hann_window[n];
+    buf[n] = in_mono[n];
   }
 
-  if (send_notifications) {
-    util::idle_add([this]() {
-      if (bypass) {
-        return;
-      }
-
-      fftwf_execute(plan);
-
-      for (uint i = 0U; i < output.size(); i++) {
-        float sqr = complex_output[i][0] * complex_output[i][0] + complex_output[i][1] * complex_output[i][1];
-
-        sqr /= static_cast<float>(output.size() * output.size());
-
-        output[i] = static_cast<double>(sqr);
-      }
-
-      power.emit(rate, output.size(), output);
-    });
-  }
+  // And we update the most recent buffer pointer.
+  data.exchange(buf.data());
 }
 
 auto Spectrum::get_latency_seconds() -> float {
   return 0.0F;
+}
+
+std::tuple<uint, uint, std::vector<double>> Spectrum::compute_magnitudes() {
+  // This is done *outside the realtime thread*, inside the main GUI thread. The
+  // realtime thread only saves samples for later inside data (which is data_a
+  // or data_b). We grab a copy (if new data has been added) and work on that.
+
+  // Grab as quickly as possible a copy of the most recent data, marking as
+  // acquired.
+  float *most_recent_data = data.exchange(NULL);
+
+  // compute_magnitudes() got called twice inbetween two process() calls.
+  if (most_recent_data == NULL)
+    return std::tuple<uint, uint, std::vector<double>>(0, 0, NULL);
+
+  // https://en.wikipedia.org/wiki/Hann_function
+  for (size_t n = 0; n < n_bands; n++) {
+    real_input[n] = most_recent_data[n] * hann_window[n];
+  }
+
+  fftwf_execute(plan);
+
+  for (uint i = 0U; i < output.size(); i++) {
+    float sqr = complex_output[i][0] * complex_output[i][0] + complex_output[i][1] * complex_output[i][1];
+
+    sqr /= static_cast<float>(output.size() * output.size());
+
+    output[i] = static_cast<double>(sqr);
+  }
+
+  return std::tuple<uint, uint, std::vector<double>>(rate, output.size(), output);
 }
