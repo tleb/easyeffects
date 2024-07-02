@@ -75,6 +75,8 @@ struct Data {
   std::vector<sigc::connection> connections;
 
   std::vector<gulong> gconnections_spectrum;
+
+  GSource *spectrum_update_timeout;
 };
 
 struct _EffectsBox {
@@ -294,6 +296,26 @@ void on_listen_mic_toggled(EffectsBox* self, GtkToggleButton* button) {
   self->data->application->sie->set_listen_to_mic(gtk_toggle_button_get_active(button) != 0);
 }
 
+static gboolean spectrum_timeout_cb(gpointer user_data) {
+  EffectsBox* self = (EffectsBox*)user_data;
+
+  // It has been a while since we last drew a frame; disable Spectrum::process().
+  self->data->effects_base->spectrum->bypass = true;
+
+  // We do not detach the source; we only puts its ready time so that it never
+  // dispatches. It will be restored to something in the future once the window
+  // gets displayed again.
+  GSource* source = self->data->spectrum_update_timeout;
+  g_source_set_ready_time(source, -1);
+  return G_SOURCE_CONTINUE;
+}
+
+gboolean spectrum_timeout_dispatch(GSource *source, GSourceFunc callback, gpointer user_data) {
+  return callback(user_data);
+}
+
+static GSourceFuncs spectrum_timeout_funcs = {NULL, NULL, spectrum_timeout_dispatch, NULL, NULL, NULL};
+
 static gboolean
 spectrum_data_update(GtkWidget* widget, GdkFrameClock* frame_clock, EffectsBox* self) {
   if (!ui::chart::get_is_visible(self->spectrum_chart)) {
@@ -303,6 +325,8 @@ spectrum_data_update(GtkWidget* widget, GdkFrameClock* frame_clock, EffectsBox* 
   if (!schedule_signal_idle) {
     return G_SOURCE_CONTINUE;
   }
+
+  self->data->effects_base->spectrum->bypass = false;
 
   auto [rate, n_bands, magnitudes] = self->data->effects_base->spectrum->compute_magnitudes();
 
@@ -342,6 +366,22 @@ spectrum_data_update(GtkWidget* widget, GdkFrameClock* frame_clock, EffectsBox* 
   });
 
   ui::chart::set_y_data(self->spectrum_chart, self->data->spectrum_mag);
+
+  // Create a timeout 200ms in the future. If we reach this function again
+  // before that, delay the timeout further. If we don't, it means the window
+  // is not being drawn anymore so we can bypass Spectrum::process().
+  gint64 spectrum_timeout_ms = 200;
+
+  if (!self->data->spectrum_update_timeout) {
+    GSource *source = g_source_new(&spectrum_timeout_funcs, sizeof(*source));
+    g_source_set_ready_time(source, g_get_monotonic_time() + spectrum_timeout_ms * 1000);
+    g_source_set_callback(source, spectrum_timeout_cb, self, NULL);
+    g_source_attach(source, NULL);
+    self->data->spectrum_update_timeout = source;
+  } else {
+    g_source_set_ready_time(self->data->spectrum_update_timeout,
+                            g_get_monotonic_time() + spectrum_timeout_ms * 1000);
+  }
 
   return G_SOURCE_CONTINUE;
 }
